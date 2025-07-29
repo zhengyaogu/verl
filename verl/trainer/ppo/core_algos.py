@@ -186,6 +186,82 @@ def compute_grpo_outcome_advantage(
 
     return scores, scores
 
+
+def compute_dgpo_outcome_advantage(
+    token_level_rewards: torch.Tensor,
+    discriminator_scores: torch.Tensor,
+    response_mask: torch.Tensor,
+    index: np.ndarray,
+    alpha: float = 1.0,
+    epsilon: float = 1e-6,
+    mask_truncated_samples: bool = False,
+    norm_adv_by_std_in_grpo: str = True,
+    stepwise_group_average_in_dgpo: bool = True,
+):
+    with torch.no_grad():
+        discriminator_scores = torch.clone(discriminator_scores)
+        scores, returns = compute_grpo_outcome_advantage(
+            token_level_rewards=token_level_rewards,
+            response_mask=response_mask,
+            index=index,
+            epsilon=epsilon,
+            mask_truncated_samples=mask_truncated_samples,
+            norm_adv_by_std_in_grpo=norm_adv_by_std_in_grpo,
+        )
+
+        bsz, seq_len = discriminator_scores.shape
+        
+        # Group sequences by their index
+        id2scores = defaultdict(list)
+        id2masks = defaultdict(list)
+            # Collect scores and masks for each group
+        for i in range(bsz):
+            group_id = index[i]
+            id2scores[group_id].append(discriminator_scores[i])  # (seq_len,)
+            id2masks[group_id].append(response_mask[i])          # (seq_len,)
+        
+        # Compute stepwise averages for each group
+        group_stepwise_means = {}
+
+        if stepwise_group_average_in_dgpo:
+            for group_id in id2scores:
+                group_scores = torch.stack(id2scores[group_id])  # (num_samples, seq_len)
+                group_masks = torch.stack(id2masks[group_id])    # (num_samples, seq_len)
+                
+                # Sum scores and counts for each timestep, excluding padded locations
+                sum_scores = (group_scores * group_masks).sum(dim=0)  # (seq_len,)
+                valid_counts = group_masks.sum(dim=0)                 # (seq_len,)
+                
+                # Compute average only where valid_counts > 0, otherwise keep as zeros
+                stepwise_means = torch.zeros_like(sum_scores)
+                valid_positions = valid_counts > 0
+                stepwise_means[valid_positions] = sum_scores[valid_positions] / valid_counts[valid_positions]
+                
+                group_stepwise_means[group_id] = stepwise_means
+            
+            # Subtract the group averages from discriminator scores, only for valid positions
+                for i in range(bsz):
+                    group_id = index[i]
+                    group_mean = group_stepwise_means[group_id]  # (seq_len,)
+                    valid_mask = response_mask[i]  # (seq_len,) - 1 for valid, 0 for padded
+                    
+                    if mask_truncated_samples:
+                        if valid_mask.sum() == 0:  # All tokens are padded
+                            continue  # Keep discriminator_scores[i] unchanged
+                        else:
+                            discriminator_scores[i] = discriminator_scores[i] - (group_mean * valid_mask)
+                    else:
+                        # Always subtract mean (original behavior)
+                        discriminator_scores[i] = discriminator_scores[i] - (group_mean * valid_mask)
+            
+                discriminator_guided_scores = scores + alpha * discriminator_scores
+        else:
+            discriminator_guided_scores = scores + alpha * discriminator_scores
+        
+        return discriminator_guided_scores, discriminator_guided_scores
+        
+        
+
 def compute_loop_outcome_advantage(token_level_rewards: torch.Tensor,
                                    eos_mask: torch.Tensor,
                                    index: torch.Tensor):
