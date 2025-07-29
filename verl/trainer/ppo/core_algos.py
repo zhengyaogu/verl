@@ -199,7 +199,19 @@ def compute_dgpo_outcome_advantage(
     stepwise_group_average_in_dgpo: bool = True,
 ):
     with torch.no_grad():
+        # Apply transformation only to valid positions
         discriminator_scores = torch.clone(discriminator_scores)
+
+        # Only transform valid positions (where response_mask == 1)
+        valid_scores = torch.clamp(discriminator_scores, min=0., max=1.0 - epsilon)
+        valid_scores = -torch.log(1 - discriminator_scores)
+        valid_scores = torch.cumsum(
+            torch.flip(valid_scores, dims=[-1]),
+            dim=-1
+        )
+        # Apply the transformation only to valid positions, keep padded positions unchanged
+        discriminator_scores = discriminator_scores * (1 - response_mask) + valid_scores * response_mask
+
         scores, returns = compute_grpo_outcome_advantage(
             token_level_rewards=token_level_rewards,
             response_mask=response_mask,
