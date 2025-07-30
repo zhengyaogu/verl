@@ -1186,6 +1186,16 @@ class CriticWorker(Worker):
                 trust_remote_code=config.model.get("trust_remote_code", False),
             )
 
+            if config.model.get("freeze_backbone", False):
+                # Replace the classifier head with a two-layer head
+                hidden_size = critic_module.score.in_features
+                critic_module.score = torch.nn.Sequential(
+                    torch.nn.Linear(hidden_size, 128),
+                    torch.nn.SiLU(),
+                    torch.nn.Dropout(0.1),
+                    torch.nn.Linear(128, 1)
+                )
+
             use_remove_padding = config.model.get("use_remove_padding", False)
 
             apply_monkey_patch(
@@ -1212,6 +1222,13 @@ class CriticWorker(Worker):
                 'bias': "none",
             }
             critic_module = get_peft_model(critic_module, LoraConfig(**lora_config))
+
+        # Freeze backbone if specified in config
+        if config.model.get("freeze_backbone", False):
+            # Freeze only the backbone (model field), keep classifier head trainable
+            for name, param in critic_module.model.named_parameters():
+                param.requires_grad = True
+                print(f"Keeping {name} trainable (classifier head)")
 
         if self.rank == 0:
             print_model_size(critic_module)

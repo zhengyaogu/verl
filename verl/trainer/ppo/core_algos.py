@@ -206,7 +206,7 @@ def compute_dgpo_outcome_advantage(
         valid_scores = torch.clamp(discriminator_scores, min=0., max=1.0 - epsilon)
         valid_scores = -torch.log(1 - discriminator_scores)
         valid_scores = torch.cumsum(
-            torch.flip(valid_scores, dims=[-1]),
+            valid_scores,
             dim=-1
         )
         # Apply the transformation only to valid positions, keep padded positions unchanged
