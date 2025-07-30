@@ -257,3 +257,113 @@ class DataParallelPPOCritic(BasePPOCritic):
                 append_to_dict(metrics, data)
         self.critic_optimizer.zero_grad()
         return metrics
+    
+
+def add_trajectory_outcomes(self, batch):
+    """
+    Add trajectory-level outcomes to the batch by summing token_level_scores.
+    
+    Args:
+        batch: DataProto containing token_level_scores
+        
+    Returns:
+        batch: DataProto with added trajectory_outcomes field
+    """
+    # Sum token_level_scores along sequence dimension to get trajectory outcomes
+    trajectory_outcomes = batch.batch["token_level_scores"].sum(dim=-1)  # Shape: (batch_size,)
+    
+    # Add to batch as a new field
+    batch.batch["trajectory_outcomes"] = trajectory_outcomes
+    
+    return batch
+
+
+class DataParallelDiscriminator(nn.Module):
+
+    @GPUMemoryLogger(role="dp critic", logger=logger)
+    def update_critic(self, data: DataProto):
+        # make sure we are in training mode
+        self.critic_module.train()
+        metrics = {}
+
+        select_keys = ["token_level_scores", "input_ids", "responses", "attention_mask", "position_ids", "values", "returns"]
+        batch = data.select(batch_keys=select_keys).batch
+        has_multi_modal_inputs = "multi_modal_inputs" in data.non_tensor_batch.keys()
+
+        # either only terminal rewards are provided or no rewards are provided
+        if ((batch.batch["token_level_scores"] != 0).sum(dim=-1)  <= 1).all():
+            # add trajectory-level outcomes to the batch
+            trajectory_outcomes = batch.batch["token_level_scores"].sum(dim=-1)
+        else:
+            raise AssertionError("More than terminal rewards are provided")
+
+        # Split to make minibatch iterator for updating the actor
+        # See PPO paper for details. https://arxiv.org/abs/1707.06347
+        if has_multi_modal_inputs:
+            num_mini_batches = data.batch.batch_size[0] // self.config.ppo_mini_batch_size
+            non_tensor_select_keys = ["multi_modal_inputs"]
+            dataloader = data.select(select_keys, non_tensor_select_keys).chunk(num_mini_batches)
+        else:
+            dataloader = batch.split(self.config.ppo_mini_batch_size)
+
+        for epoch in range(self.config.ppo_epochs):
+            for batch_idx, data in enumerate(dataloader):
+                # split batch into micro_batches
+                mini_batch = data
+                if has_multi_modal_inputs:
+                    num_micro_batches = mini_batch.batch.batch_size[0] // self.config.ppo_micro_batch_size_per_gpu
+                    micro_batches = data.select(select_keys, non_tensor_select_keys).chunk(num_micro_batches)
+                elif self.config.use_dynamic_bsz:
+                    max_token_len = self.config.ppo_max_token_len_per_gpu * self.ulysses_sequence_parallel_size
+                    micro_batches, _ = rearrange_micro_batches(batch=mini_batch, max_token_len=max_token_len)
+                else:
+                    micro_batches = mini_batch.split(self.config.ppo_micro_batch_size_per_gpu)
+                    self.gradient_accumulation = self.config.ppo_mini_batch_size // self.config.ppo_micro_batch_size_per_gpu
+
+                self.critic_optimizer.zero_grad()
+
+                for data in micro_batches:
+                    # Support all devices
+                    if isinstance(data, DataProto):
+                        data = {**data.batch.to(get_torch_device().current_device()), **data.non_tensor_batch}
+                    else:
+                        data = data.to(get_torch_device().current_device())  # critic device is cpu when using offload
+                    responses = data["responses"]
+                    attention_mask = data["attention_mask"]
+                    values = data["values"]
+                    returns = data["returns"]
+                    response_length = responses.size(1)
+
+                    response_mask = attention_mask[:, -response_length - 1 : -1]
+
+                    vpreds = self._forward_micro_batch(data)
+
+                    # assert not torch.any(torch.isnan(vpreds)).item()
+
+                    bce_loss = core_algos.compute_bce_loss(
+                        vpreds=vpreds,
+                        labels=trajectory_outcomes,
+                        response_mask=response_mask,
+                        cliprange_value=self.config.cliprange_value,
+                        loss_agg_mode=self.config.loss_agg_mode,
+                    )
+                    if self.config.use_dynamic_bsz:
+                        # relative to the dynamic bsz
+                        loss = bce_loss * (len(data) / self.config.ppo_mini_batch_size)
+                    else:
+                        loss = bce_loss / self.gradient_accumulation
+
+                    loss.backward()
+
+                    data = {
+                        "critic/bce_loss": bce_loss.detach().item(),
+                        "critic/vpred_mean": masked_mean(vpreds, response_mask).detach().item(),
+                    }
+
+                    append_to_dict(metrics, data)
+
+                grad_norm = self._optimizer_step()
+                data = {"critic/grad_norm": grad_norm.detach().item()}
+                append_to_dict(metrics, data)
+        self.critic_optimizer.zero_grad()
+        return metrics

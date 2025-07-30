@@ -199,8 +199,8 @@ def compute_dgpo_outcome_advantage(
     stepwise_group_average_in_dgpo: bool = True,
 ):
     with torch.no_grad():
-        # Apply transformation only to valid positions
-        discriminator_scores = torch.clone(discriminator_scores)
+        # Apply sigmoid
+        discriminator_scores = torch.sigmoid(discriminator_scores)
 
         # Only transform valid positions (where response_mask == 1)
         valid_scores = torch.clamp(discriminator_scores, min=0., max=1.0 - epsilon)
@@ -212,6 +212,7 @@ def compute_dgpo_outcome_advantage(
         # Apply the transformation only to valid positions, keep padded positions unchanged
         discriminator_scores = discriminator_scores * (1 - response_mask) + valid_scores * response_mask
 
+        # compute grpo advantage
         scores, returns = compute_grpo_outcome_advantage(
             token_level_rewards=token_level_rewards,
             response_mask=response_mask,
@@ -675,6 +676,39 @@ def compute_value_loss(vpreds: torch.Tensor, returns: torch.Tensor, values: torc
     vf_loss = agg_loss(loss_mat=clipped_vf_losses, loss_mask=response_mask, loss_agg_mode=loss_agg_mode)
     vf_clipfrac = verl_F.masked_mean(torch.gt(vf_losses2, vf_losses1).float(), response_mask)
     return vf_loss, vf_clipfrac
+
+
+def compute_bce_loss(vpreds: torch.Tensor, labels: torch.Tensor, response_mask: torch.Tensor, cliprange_value: float, loss_agg_mode: str = "token-mean"):
+    """Compute the bce loss.
+
+    Args:
+        vpreds (`torch.FloatTensor`):
+            Predicted values of the value head, shape (`batch_size`, `response_length`)
+        labels (`torch.FloatTensor`):
+            Ground truth labels, shape (`batch_size`, )
+        values (`torch.FloatTensor`):
+            Old values of value head, shape (`batch_size`, `response_length`)
+        returns: (`torch.FloatTensor`):
+            Ground truth returns, shape (`batch_size`, `response_length`)
+        response_mask: `(torch.Tensor)`
+            Mask for tokens to calculate value function losses. # TODO: Rename to `state_mask`.
+        loss_agg_mode: (str) see `agg_loss`
+
+    Returns:
+        vf_loss: a scalar (`torch.FloatTensor`):
+            value function loss
+        vf_clipfrac: a float
+            The ratio of vf being clipped
+
+    """
+    # broadcast labels to the same shape as ppreds
+    labels = labels.unsqueeze(-1).tile([1, vpreds.shape[1]])
+    # compute bce loss
+    bce_loss = torch.nn.functional.binary_cross_entropy_with_logits(vpreds, labels)
+    # apply response mask
+    bce_loss = agg_loss(loss_mat=bce_loss, loss_mask=response_mask, loss_agg_mode=loss_agg_mode)
+
+    return bce_loss
 
 
 def kl_penalty(logprob: torch.FloatTensor, ref_logprob: torch.FloatTensor, kl_penalty) -> torch.FloatTensor:
