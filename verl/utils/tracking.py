@@ -128,6 +128,11 @@ class Tracking:
         for default_backend, logger_instance in self.logger.items():
             if backend is None or default_backend in backend:
                 logger_instance.log(data=data, step=step)
+    
+    def log_embedding(self, data, step):
+        # this is a tensorboard only function
+        assert "tensorboard" in self.logger, "tensorboard is not one of the backends"
+        self.logger["tensorboard"].log_embedding(data=data, step=step)
 
     def __del__(self):
         if "wandb" in self.logger:
@@ -206,6 +211,10 @@ class _TensorboardAdapter:
     def log(self, data, step):
         for key in data:
             self.writer.add_scalar(key, data[key], step)
+    
+    def log_embedding(self, data, step):
+        for key in data:
+            self.writer.add_embedding(data[key], global_step=step, tag=key)
 
     def finish(self):
         self.writer.close()

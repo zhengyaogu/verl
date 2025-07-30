@@ -704,11 +704,11 @@ def compute_bce_loss(vpreds: torch.Tensor, labels: torch.Tensor, response_mask: 
     # broadcast labels to the same shape as ppreds
     labels = labels.unsqueeze(-1).tile([1, vpreds.shape[1]])
     # compute bce loss
-    bce_loss = torch.nn.functional.binary_cross_entropy_with_logits(vpreds, labels)
+    bce_loss = torch.nn.functional.binary_cross_entropy_with_logits(vpreds, labels, reduction="none")
     # apply response mask
-    bce_loss = agg_loss(loss_mat=bce_loss, loss_mask=response_mask, loss_agg_mode=loss_agg_mode)
+    loss = agg_loss(loss_mat=bce_loss, loss_mask=response_mask, loss_agg_mode=loss_agg_mode)
 
-    return bce_loss
+    return loss, bce_loss
 
 
 def kl_penalty(logprob: torch.FloatTensor, ref_logprob: torch.FloatTensor, kl_penalty) -> torch.FloatTensor:

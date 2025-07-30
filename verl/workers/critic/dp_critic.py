@@ -340,7 +340,7 @@ class DataParallelDiscriminator(nn.Module):
 
                     # assert not torch.any(torch.isnan(vpreds)).item()
 
-                    bce_loss = core_algos.compute_bce_loss(
+                    bce_loss, unreduced_bce_loss = core_algos.compute_bce_loss(
                         vpreds=vpreds,
                         labels=trajectory_outcomes,
                         response_mask=response_mask,
@@ -358,6 +358,7 @@ class DataParallelDiscriminator(nn.Module):
                     data = {
                         "critic/bce_loss": bce_loss.detach().item(),
                         "critic/vpred_mean": masked_mean(vpreds, response_mask).detach().item(),
+                        "critic/unreduced_bce_loss": unreduced_bce_loss.detach().detach().cpu(),
                     }
 
                     append_to_dict(metrics, data)
