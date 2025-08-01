@@ -32,7 +32,7 @@ def default_compute_score(data_source, solution_str, ground_truth, extra_info=No
     Raises:
         NotImplementedError: If the reward function is not implemented for the given data source.
     """
-    if data_source == "openai/gsm8k":
+    if data_source.contains("gsm8k"):
         from . import gsm8k
 
         res = gsm8k.compute_score(solution_str, ground_truth)
@@ -83,7 +83,9 @@ def default_compute_score(data_source, solution_str, ground_truth, extra_info=No
         from . import search_r1_like_qa_em
 
         res = search_r1_like_qa_em.compute_score(solution_str, ground_truth)
-
+    elif data_source in ["big_math", "orca_math", "cn_k12", "olympiads", "aops_forum", "gsm8k", "amc_aime", "math", "omnimath", "openmath", "harp"]:
+        from . import big_math
+        res = big_math.compute_score(solution_str, ground_truth)
     else:
         raise NotImplementedError(f"Reward function is not implemented for {data_source=}")
 
