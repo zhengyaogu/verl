@@ -588,10 +588,10 @@ class RayPPOTrainer:
             train_batch_size *= self.config.trainer.rejection_sample_multiplier
             train_batch_size = int(train_batch_size)
         
-        oversample_factor = self.config.data.get("oversample_factor", 1.0)
+        oversample_factor = self.config.data.get("oversample_factor", 1)
         self.train_dataloader = StatefulDataLoader(
             dataset=self.train_dataset,
-            batch_size=train_batch_size * oversample_factor,
+            batch_size=int(train_batch_size * oversample_factor),
             num_workers=self.config.data.get("dataloader_num_workers", 8),
             drop_last=True,
             collate_fn=collate_fn,
