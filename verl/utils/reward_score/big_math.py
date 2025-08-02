@@ -16,7 +16,6 @@ from loguru import logger
 from openai import AsyncOpenAI
 from sympy.parsing.latex import parse_latex
 from tenacity import AsyncRetrying, stop_after_attempt, wait_exponential
-from math_verify import parse, verify
 from math_verify.parser import LatexExtractionConfig, ExprExtractionConfig
 
 
@@ -25,7 +24,7 @@ def compute_score(solution_str: str, ground_truth: str) -> float:
     Compute the score for a given solution and ground truth.
     """
     answer = get_answer_expr(solution_str)
-    return 1.0 if verify(answer, ground_truth) else 0.0
+    return 1.0 if is_correct_no_judge(answer, ground_truth) else 0.0
     
 
 
