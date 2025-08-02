@@ -427,6 +427,12 @@ class RayPPOTrainer:
         if config.algorithm.use_kl_in_reward:
             self.kl_ctrl_in_reward = core_algos.get_kl_controller(config.algorithm.kl_ctrl)
 
+        # configure `use_discriminator`
+        if self.config.algorithm.adv_estimator == AdvantageEstimator.DGPO
+            self.use_discriminator = True
+        else:
+            self.use_discriminator = False
+        
         if self.config.algorithm.adv_estimator in[
             AdvantageEstimator.GAE,
             AdvantageEstimator.DGPO,
