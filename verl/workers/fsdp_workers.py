@@ -1466,6 +1466,7 @@ class RewardModelWorker(Worker):
         from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
         from transformers import AutoConfig, AutoModelForTokenClassification
 
+        print("######################### setup config & tokenizer #########################")
         use_shm = config.model.get('use_shm', False)
         # download the checkpoint from hdfs
         local_path = copy_to_local(config.model.path, use_shm=use_shm)
@@ -1477,17 +1478,24 @@ class RewardModelWorker(Worker):
             input_tokenizer_local_path = copy_to_local(config.model.input_tokenizer, use_shm=use_shm)
             self.input_tokenizer = hf_tokenizer(input_tokenizer_local_path, trust_remote_code=config.model.get("trust_remote_code", False))
             self.tokenizer = hf_tokenizer(local_path, trust_remote_code=config.model.get("trust_remote_code", False))
+        print("######################### setup config & tokenizer done #########################")
 
+        print("######################### setup model config #########################")
         trust_remote_code = config.model.get("trust_remote_code", False)
         model_config = AutoConfig.from_pretrained(local_path, trust_remote_code=trust_remote_code)
         model_config.num_labels = 1
+        print("######################### setup model config done #########################")
 
         # note that we have to create model in fp32. Otherwise, the optimizer is in bf16, which is incorrect
+        print("######################### setup init context #########################")
         init_context = get_init_weight_context_manager(use_meta_tensor=not model_config.tie_word_embeddings, mesh=self.device_mesh)
+        print("######################### setup init context done #########################")
 
+        print("######################### setup warnings #########################")
         with init_context(), warnings.catch_warnings():
             warnings.simplefilter("ignore")
             model_config.classifier_dropout = 0.0
+            print("######################### loading reward model #########################")
             reward_module = AutoModelForTokenClassification.from_pretrained(
                 pretrained_model_name_or_path=local_path,
                 config=model_config,
@@ -1495,6 +1503,12 @@ class RewardModelWorker(Worker):
                 attn_implementation="flash_attention_2",
                 trust_remote_code=trust_remote_code,
             )
+            print("######################### reward model loaded #########################")
+
+            if config.model.get("style", "prm") == "orm":
+                print("######################### set bias term to zero #########################")
+                reward_module.score.bias.data.zero_()
+                print("######################### bias term set to zero #########################")
 
             apply_monkey_patch(
                 model=reward_module,

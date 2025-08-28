@@ -824,9 +824,11 @@ class RayPPOTrainer:
         # create a reward model if reward_fn is None
         if self.use_rm:
             # we create a RM here
+            print("Assigning RM worker class...")
             resource_pool = self.resource_pool_manager.get_resource_pool(Role.RewardModel)
             rm_cls = RayClassWithInitArgs(self.role_worker_mapping[Role.RewardModel], config=self.config.reward_model)
             self.resource_pool_to_cls[resource_pool]["rm"] = rm_cls
+            print("RM worker class assigned")
 
         # initialize WorkerGroup
         # NOTE: if you want to use a different resource pool for each role, which can support different parallel size,
@@ -854,7 +856,9 @@ class RayPPOTrainer:
 
         if self.use_rm:
             self.rm_wg = all_wg["rm"]
+            print("Creating RM worker group...")
             self.rm_wg.init_model()
+            print("RM worker group created")
 
         # we should create rollout at the end so that vllm can have a better estimation of kv cache memory
         if self.hybrid_engine:
